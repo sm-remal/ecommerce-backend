@@ -12,7 +12,7 @@ import {
 const router = Router();
 
 router.get("/", authMiddleware, requireAdmin, validateRequest({ query: parseOrderListFilters }), OrderController.getOrders);
-router.get("/number/:orderNumber", OrderController.getOrderByNumber);
+router.get("/number/:orderNumber", authMiddleware, requireAdmin, OrderController.getOrderByNumber);
 router.get("/:id", authMiddleware, requireAdmin, OrderController.getOrderById);
 router.post("/", validateRequest({ body: parseCreateOrderPayload }), OrderController.createOrder);
 router.patch("/:id", authMiddleware, requireAdmin, validateRequest({ body: parseUpdateOrderPayload }), OrderController.updateOrder);

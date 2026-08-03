@@ -24,6 +24,16 @@ const createMedia = asyncHandler(async (req: AuthenticatedRequest, res: Response
     });
 });
 
+const uploadMedia = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const media = await MediaService.uploadMedia(req.body, req.user?.id);
+
+    sendResponse(res, 201, {
+        success: true,
+        message: responseMessages.media.created,
+        data: media,
+    });
+});
+
 const getMediaList = asyncHandler(async (req: Request, res: Response) => {
     const filters: MediaListFilters = {};
     const search = getQueryValue(req.query.search);
@@ -94,6 +104,7 @@ const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
 
 export const MediaController = {
     createMedia,
+    uploadMedia,
     getMediaList,
     getMediaById,
     updateMedia,

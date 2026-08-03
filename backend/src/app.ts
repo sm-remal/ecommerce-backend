@@ -27,6 +27,7 @@ import { TagRoutes } from "./modules/tag/tag.route";
 import { UserRoutes } from "./modules/user/user.route";
 import { WishlistRoutes } from "./modules/wishlist/wishlist.route";
 import { globalErrorHandler, notFoundHandler } from "./middleware/globalErrorHandler";
+import { requestLogger } from "./middleware/requestLogger";
 import {
     authRateLimiter,
     getCorsOrigin,
@@ -34,12 +35,15 @@ import {
     requestSanitizer,
     securityHeaders,
 } from "./middleware/security";
+import { prisma } from "./lib/prisma";
 
 const app: Application = express();
 app.disable("x-powered-by");
+app.set("trust proxy", config.trust_proxy);
 
 // Middleware
 app.use(securityHeaders);
+app.use(requestLogger);
 app.use(rateLimiter());
 app.use(cors({
     origin: getCorsOrigin(),
@@ -50,6 +54,21 @@ app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
 app.use(requestSanitizer);
 
+app.get("/health", async (req: Request, res: Response, next) => {
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+
+        res.status(200).json({
+            success: true,
+            status: "ok",
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+            database: "ok",
+        });
+    } catch (error) {
+        next(error);
+    }
+});
 
 // API's
 app.use("/api/v1/auth", authRateLimiter, AuthRoutes);

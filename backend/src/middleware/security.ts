@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
+import { createClient, type RedisClientType } from "redis";
 import config from "../config";
 import { AppError } from "../utility/AppError";
 
@@ -14,6 +15,8 @@ const defaultMaxRequests = 300;
 const authMaxRequests = 50;
 const cleanupIntervalMs = 5 * 60 * 1000;
 let lastCleanupAt = Date.now();
+let redisClient: RedisClientType | undefined;
+let redisConnectPromise: Promise<RedisClientType> | undefined;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => (
     typeof value === "object"
@@ -75,6 +78,50 @@ const cleanupRateLimitStore = () => {
     lastCleanupAt = now;
 };
 
+const getRedisClient = async () => {
+    if (!config.redis_url) {
+        return undefined;
+    }
+
+    if (redisClient?.isOpen) {
+        return redisClient;
+    }
+
+    if (!redisConnectPromise) {
+        const client = createClient({ url: config.redis_url });
+        client.on("error", (error) => {
+            console.error("Redis rate limiter error", error);
+        });
+
+        redisConnectPromise = client.connect().then(() => {
+            redisClient = client as RedisClientType;
+            return redisClient;
+        });
+    }
+
+    return redisConnectPromise;
+};
+
+const incrementRedisRateLimit = async (key: string, windowMs: number) => {
+    const client = await getRedisClient();
+
+    if (!client) {
+        return undefined;
+    }
+
+    const count = await client.incr(key);
+    if (count === 1) {
+        await client.pExpire(key, windowMs);
+    }
+
+    const ttl = await client.pTTL(key);
+
+    return {
+        count,
+        resetAt: Date.now() + Math.max(ttl, 0),
+    };
+};
+
 export const securityHeaders: RequestHandler = (req, res, next) => {
     const nonce = crypto.randomBytes(16).toString("base64");
     res.locals.cspNonce = nonce;
@@ -126,30 +173,39 @@ export const rateLimiter = (options: {
     const maxRequests = options.maxRequests || defaultMaxRequests;
     const keyPrefix = options.keyPrefix || "global";
 
-    return (req: Request, res: Response, next: NextFunction) => {
-        cleanupRateLimitStore();
+    return async (req: Request, res: Response, next: NextFunction) => {
+        try {
+            cleanupRateLimitStore();
 
-        const now = Date.now();
-        const key = `${keyPrefix}:${getClientIp(req)}`;
-        const current = rateLimitStore.get(key);
-        const record = current && current.resetAt > now
-            ? current
-            : { count: 0, resetAt: now + windowMs };
+            const now = Date.now();
+            const key = `${keyPrefix}:${getClientIp(req)}`;
+            const redisRecord = await incrementRedisRateLimit(key, windowMs);
+            const record = redisRecord || (() => {
+                const current = rateLimitStore.get(key);
+                const memoryRecord = current && current.resetAt > now
+                    ? current
+                    : { count: 0, resetAt: now + windowMs };
 
-        record.count += 1;
-        rateLimitStore.set(key, record);
+                memoryRecord.count += 1;
+                rateLimitStore.set(key, memoryRecord);
 
-        const remaining = Math.max(maxRequests - record.count, 0);
-        res.setHeader("RateLimit-Limit", String(maxRequests));
-        res.setHeader("RateLimit-Remaining", String(remaining));
-        res.setHeader("RateLimit-Reset", String(Math.ceil(record.resetAt / 1000)));
+                return memoryRecord;
+            })();
 
-        if (record.count > maxRequests) {
-            next(new AppError(429, "Too many requests, please try again later"));
-            return;
+            const remaining = Math.max(maxRequests - record.count, 0);
+            res.setHeader("RateLimit-Limit", String(maxRequests));
+            res.setHeader("RateLimit-Remaining", String(remaining));
+            res.setHeader("RateLimit-Reset", String(Math.ceil(record.resetAt / 1000)));
+
+            if (record.count > maxRequests) {
+                next(new AppError(429, "Too many requests, please try again later"));
+                return;
+            }
+
+            next();
+        } catch (error) {
+            next(error);
         }
-
-        next();
     };
 };
 

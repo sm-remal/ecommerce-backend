@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utility/AppError";
-import type { CreateMediaPayload, MediaItem, MediaListFilters, MediaType, UpdateMediaPayload } from "./media.interface";
+import type { CreateMediaPayload, MediaItem, MediaListFilters, MediaType, UpdateMediaPayload, UploadMediaPayload } from "./media.interface";
 
 type MediaRecord = {
     id: string;
@@ -115,6 +115,22 @@ export const validateMediaPayload = (payload: CreateMediaPayload | UpdateMediaPa
 
     if (typeof payload.size !== "undefined" && (!Number.isFinite(Number(payload.size)) || Number(payload.size) < 0)) {
         throw new AppError(400, "Valid media size is required");
+    }
+};
+
+export const validateUploadMediaPayload = (payload: UploadMediaPayload) => {
+    const file = payload.file?.trim();
+
+    if (!file) {
+        throw new AppError(400, "File is required");
+    }
+
+    if (payload.type && !mediaTypes.includes(payload.type)) {
+        throw new AppError(400, "Invalid media type");
+    }
+
+    if (payload.folder && payload.folder.length > 120) {
+        throw new AppError(400, "Folder must be 120 characters or less");
     }
 };
 

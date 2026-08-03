@@ -34,3 +34,10 @@ export type CreateMediaPayload = {
 };
 
 export type UpdateMediaPayload = Partial<CreateMediaPayload>;
+
+export type UploadMediaPayload = {
+    file: string;
+    type?: MediaType;
+    fileName?: string;
+    folder?: string;
+};

@@ -1,14 +1,10 @@
 import type { CookieOptions, Request, Response } from "express";
 import config from "../../config";
+import type { AuthenticatedRequest } from "../../middleware/auth";
+import { AppError } from "../../utility/AppError";
+import asyncHandler from "../../utility/asyncHandler";
 import { AuthService } from "./auth.service";
 import type { AuthResponse } from "./auth.interface";
-
-type AuthenticatedRequest = Request & {
-    user?: {
-        id: string;
-        email: string;
-    };
-};
 
 const accessTokenCookieName = "accessToken";
 const refreshTokenCookieName = "refreshToken";
@@ -40,101 +36,69 @@ const clearAuthCookies = (res: Response) => {
     res.clearCookie(refreshTokenCookieName, cookieBaseOptions);
 };
 
-const sendError = (res: Response, error: unknown, statusCode = 400) => {
-    const message = error instanceof Error ? error.message : "Something went wrong";
+const register = asyncHandler(async (req: Request, res: Response) => {
+    const result = await AuthService.register(req.body);
+    setAuthCookies(res, result);
 
-    res.status(statusCode).json({
-        success: false,
-        message,
+    res.status(201).json({
+        success: true,
+        message: "Registration successful",
+        data: { user: result.user },
     });
-};
+});
 
-const register = async (req: Request, res: Response) => {
-    try {
-        const result = await AuthService.register(req.body);
-        setAuthCookies(res, result);
+const login = asyncHandler(async (req: Request, res: Response) => {
+    const result = await AuthService.login(req.body);
+    setAuthCookies(res, result);
 
-        res.status(201).json({
-            success: true,
-            message: "Registration successful",
-            data: { user: result.user },
-        });
-    } catch (error) {
-        sendError(res, error);
+    res.status(200).json({
+        success: true,
+        message: "Login successful",
+        data: { user: result.user },
+    });
+});
+
+const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
+    const result = await AuthService.forgotPassword(req.body);
+    const responseData = config.node_env === "production"
+        ? { expiresAt: result.expiresAt }
+        : result;
+
+    res.status(200).json({
+        success: true,
+        message: result.message,
+        data: responseData,
+    });
+});
+
+const resetPassword = asyncHandler(async (req: Request, res: Response) => {
+    const result = await AuthService.resetPassword(req.body);
+    clearAuthCookies(res);
+
+    res.status(200).json({
+        success: true,
+        message: result.message,
+    });
+});
+
+const changePassword = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.user?.id) {
+        throw new AppError(401, "Unauthorized");
     }
-};
 
-const login = async (req: Request, res: Response) => {
+    const result = await AuthService.changePassword(req.user.id, req.body);
+    clearAuthCookies(res);
+
+    res.status(200).json({
+        success: true,
+        message: result.message,
+    });
+});
+
+const refreshToken = asyncHandler(async (req: Request, res: Response) => {
+    const token = req.cookies?.[refreshTokenCookieName] as string | undefined;
+
     try {
-        const result = await AuthService.login(req.body);
-        setAuthCookies(res, result);
-
-        res.status(200).json({
-            success: true,
-            message: "Login successful",
-            data: { user: result.user },
-        });
-    } catch (error) {
-        sendError(res, error, 401);
-    }
-};
-
-const forgotPassword = async (req: Request, res: Response) => {
-    try {
-        const result = await AuthService.forgotPassword(req.body);
-        const responseData = config.node_env === "production"
-            ? { expiresAt: result.expiresAt }
-            : result;
-
-        res.status(200).json({
-            success: true,
-            message: result.message,
-            data: responseData,
-        });
-    } catch (error) {
-        sendError(res, error);
-    }
-};
-
-const resetPassword = async (req: Request, res: Response) => {
-    try {
-        const result = await AuthService.resetPassword(req.body);
-        clearAuthCookies(res);
-
-        res.status(200).json({
-            success: true,
-            message: result.message,
-        });
-    } catch (error) {
-        sendError(res, error);
-    }
-};
-
-const changePassword = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-        if (!req.user?.id) {
-            res.status(401).json({
-                success: false,
-                message: "Unauthorized",
-            });
-            return;
-        }
-
-        const result = await AuthService.changePassword(req.user.id, req.body);
-        clearAuthCookies(res);
-
-        res.status(200).json({
-            success: true,
-            message: result.message,
-        });
-    } catch (error) {
-        sendError(res, error);
-    }
-};
-
-const refreshToken = async (req: Request, res: Response) => {
-    try {
-        const token = req.cookies?.[refreshTokenCookieName] as string | undefined;
         const result = await AuthService.refreshToken(token || "");
         setAuthCookies(res, result);
 
@@ -145,45 +109,33 @@ const refreshToken = async (req: Request, res: Response) => {
         });
     } catch (error) {
         clearAuthCookies(res);
-        sendError(res, error, 401);
+        throw error;
     }
-};
+});
 
-const logout = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-        const result = await AuthService.logout(req.user?.id);
-        clearAuthCookies(res);
+const logout = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const result = await AuthService.logout(req.user?.id);
+    clearAuthCookies(res);
 
-        res.status(200).json({
-            success: true,
-            message: result.message,
-        });
-    } catch (error) {
-        sendError(res, error);
+    res.status(200).json({
+        success: true,
+        message: result.message,
+    });
+});
+
+const me = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.user?.id) {
+        throw new AppError(401, "Unauthorized");
     }
-};
 
-const me = async (req: AuthenticatedRequest, res: Response) => {
-    try {
-        if (!req.user?.id) {
-            res.status(401).json({
-                success: false,
-                message: "Unauthorized",
-            });
-            return;
-        }
+    const user = await AuthService.getCurrentUser(req.user.id);
 
-        const user = await AuthService.getCurrentUser(req.user.id);
-
-        res.status(200).json({
-            success: true,
-            message: "Current user fetched successfully",
-            data: { user },
-        });
-    } catch (error) {
-        sendError(res, error, 401);
-    }
-};
+    res.status(200).json({
+        success: true,
+        message: "Current user fetched successfully",
+        data: { user },
+    });
+});
 
 export const AuthController = {
     register,

@@ -6,10 +6,10 @@ import { validateAdjustInventoryPayload, validateInventoryPayload } from "./inve
 
 const router = Router();
 
-router.get("/", InventoryController.getInventories);
-router.get("/logs", InventoryController.getInventoryLogs);
+router.get("/", authMiddleware, requireAdmin, InventoryController.getInventories);
+router.get("/logs", authMiddleware, requireAdmin, InventoryController.getInventoryLogs);
 router.get("/product/:productId", InventoryController.getInventoryByProductId);
-router.get("/:id", InventoryController.getInventoryById);
+router.get("/:id", authMiddleware, requireAdmin, InventoryController.getInventoryById);
 router.post("/", authMiddleware, requireAdmin, validateRequest({ body: (body) => validateInventoryPayload(body as Parameters<typeof validateInventoryPayload>[0]) }), InventoryController.createInventory);
 router.patch("/:id", authMiddleware, requireAdmin, validateRequest({ body: (body) => validateInventoryPayload(body as Parameters<typeof validateInventoryPayload>[0], true) }), InventoryController.updateInventory);
 router.patch("/product/:productId/adjust", authMiddleware, requireAdmin, validateRequest({ body: (body) => validateAdjustInventoryPayload(body as Parameters<typeof validateAdjustInventoryPayload>[0]) }), InventoryController.adjustInventory);

@@ -1,8 +1,9 @@
 import { prisma } from "../../lib/prisma";
 import { AppError } from "../../utility/AppError";
+import { deleteFromCloudinary, uploadToCloudinary } from "../../utility/cloudinary";
 import { buildPagination, buildPaginationMeta } from "../../utility/pagination";
 import { responseMessages } from "../../utility/responseMessages";
-import type { CreateMediaPayload, MediaListFilters, UpdateMediaPayload } from "./media.interface";
+import type { CreateMediaPayload, MediaListFilters, MediaType, UpdateMediaPayload, UploadMediaPayload } from "./media.interface";
 import {
     buildCreateMediaData,
     buildMediaWhereClause,
@@ -11,7 +12,20 @@ import {
     mapMedia,
     mediaInclude,
     validateMediaPayload,
+    validateUploadMediaPayload,
 } from "./media.validation";
+
+const getCloudinaryResourceType = (type?: MediaType) => {
+    if (type === "VIDEO") {
+        return "video";
+    }
+
+    if (type === "DOCUMENT") {
+        return "raw";
+    }
+
+    return "image";
+};
 
 const createMedia = async (payload: CreateMediaPayload, userId?: string) => {
     try {
@@ -22,6 +36,36 @@ const createMedia = async (payload: CreateMediaPayload, userId?: string) => {
 
         const media = await prisma.media.create({
             data: buildCreateMediaData(payload, uploadedById),
+            include: mediaInclude,
+        });
+
+        return mapMedia(media);
+    } catch (error) {
+        throw error;
+    }
+};
+
+const uploadMedia = async (payload: UploadMediaPayload, userId?: string) => {
+    try {
+        validateUploadMediaPayload(payload);
+        await ensureMediaUploaderExists(userId);
+
+        const uploaded = await uploadToCloudinary({
+            file: payload.file.trim(),
+            resourceType: getCloudinaryResourceType(payload.type),
+            ...(payload.folder?.trim() ? { folder: payload.folder.trim() } : {}),
+            ...(payload.fileName?.trim() ? { fileName: payload.fileName.trim() } : {}),
+        });
+
+        const fileName = payload.fileName || uploaded.originalFilename || undefined;
+        const media = await prisma.media.create({
+            data: buildCreateMediaData({
+                url: uploaded.secureUrl,
+                publicId: uploaded.publicId,
+                type: payload.type ?? "IMAGE",
+                size: uploaded.bytes,
+                ...(fileName ? { fileName } : {}),
+            }, userId || null),
             include: mediaInclude,
         });
 
@@ -123,6 +167,10 @@ const deleteMedia = async (id: string) => {
             where: { id },
         });
 
+        if (deletedMedia.publicId) {
+            await deleteFromCloudinary(deletedMedia.publicId, getCloudinaryResourceType(deletedMedia.type));
+        }
+
         return {
             id: deletedMedia.id,
             url: deletedMedia.url,
@@ -135,6 +183,7 @@ const deleteMedia = async (id: string) => {
 
 export const MediaService = {
     createMedia,
+    uploadMedia,
     getMediaList,
     getMediaById,
     updateMedia,

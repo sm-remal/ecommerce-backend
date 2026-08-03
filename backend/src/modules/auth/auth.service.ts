@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import jwt, { type JwtPayload, type Secret, type SignOptions } from "jsonwebtoken";
 import config from "../../config";
 import { prisma } from "../../lib/prisma";
+import { AppError } from "../../utility/AppError";
 import type {
     AuthResponse,
     AuthTokens,
@@ -21,7 +22,7 @@ type TokenPayload = JwtPayload & {
 
 const requireEnv = (value: string | undefined, name: string): string => {
     if (!value) {
-        throw new Error(`${name} is not configured`);
+        throw new AppError(500, `${name} is not configured`);
     }
 
     return value;
@@ -32,13 +33,13 @@ const normalizeEmail = (email: string) => email.trim().toLowerCase();
 const validateEmail = (email: string) => {
     const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!isValid) {
-        throw new Error("Valid email is required");
+        throw new AppError(400, "Valid email is required");
     }
 };
 
 const validatePassword = (password: string, fieldName = "Password") => {
     if (!password || password.length < 8) {
-        throw new Error(`${fieldName} must be at least 8 characters`);
+        throw new AppError(400, `${fieldName} must be at least 8 characters`);
     }
 };
 
@@ -73,7 +74,7 @@ const getCurrentUser = async (userId: string): Promise<AuthUser> => {
         });
 
         if (!user) {
-            throw new Error("User not found");
+            throw new AppError(404, "User not found");
         }
 
         return mapUser(user);
@@ -142,7 +143,7 @@ const register = async (payload: RegisterPayload): Promise<AuthResponse> => {
         const phone = payload.phone?.trim();
 
         if (!name) {
-            throw new Error("Name is required");
+            throw new AppError(400, "Name is required");
         }
 
         validateEmail(email);
@@ -150,7 +151,7 @@ const register = async (payload: RegisterPayload): Promise<AuthResponse> => {
 
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
-            throw new Error("Email already registered");
+            throw new AppError(409, "Email already registered");
         }
 
         const password = await bcrypt.hash(payload.password, getSaltRounds());
@@ -175,21 +176,21 @@ const login = async (payload: LoginPayload): Promise<AuthResponse> => {
         validateEmail(email);
 
         if (!payload.password) {
-            throw new Error("Password is required");
+            throw new AppError(400, "Password is required");
         }
 
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user) {
-            throw new Error("Invalid email or password");
+            throw new AppError(401, "Invalid email or password");
         }
 
         if (user.status !== "ACTIVE") {
-            throw new Error("Account is not active");
+            throw new AppError(403, "Account is not active");
         }
 
         const isPasswordValid = await bcrypt.compare(payload.password, user.password);
         if (!isPasswordValid) {
-            throw new Error("Invalid email or password");
+            throw new AppError(401, "Invalid email or password");
         }
 
         const updatedUser = await prisma.user.update({
@@ -241,7 +242,7 @@ const forgotPassword = async (payload: ForgotPasswordPayload) => {
 const resetPassword = async (payload: ResetPasswordPayload) => {
     try {
         if (!payload.token) {
-            throw new Error("Reset token is required");
+            throw new AppError(400, "Reset token is required");
         }
 
         validatePassword(payload.password);
@@ -253,7 +254,7 @@ const resetPassword = async (payload: ResetPasswordPayload) => {
         });
 
         if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) {
-            throw new Error("Reset token is invalid or expired");
+            throw new AppError(400, "Reset token is invalid or expired");
         }
 
         const password = await bcrypt.hash(payload.password, getSaltRounds());
@@ -282,19 +283,19 @@ const resetPassword = async (payload: ResetPasswordPayload) => {
 const changePassword = async (userId: string, payload: ChangePasswordPayload) => {
     try {
         if (!payload.currentPassword) {
-            throw new Error("Current password is required");
+            throw new AppError(400, "Current password is required");
         }
 
         validatePassword(payload.newPassword, "New password");
 
         const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user) {
-            throw new Error("User not found");
+            throw new AppError(404, "User not found");
         }
 
         const isPasswordValid = await bcrypt.compare(payload.currentPassword, user.password);
         if (!isPasswordValid) {
-            throw new Error("Current password is incorrect");
+            throw new AppError(401, "Current password is incorrect");
         }
 
         const password = await bcrypt.hash(payload.newPassword, getSaltRounds());
@@ -316,19 +317,19 @@ const changePassword = async (userId: string, payload: ChangePasswordPayload) =>
 const refreshToken = async (refreshTokenValue: string): Promise<AuthResponse> => {
     try {
         if (!refreshTokenValue) {
-            throw new Error("Refresh token is required");
+            throw new AppError(401, "Refresh token is required");
         }
 
         const decoded = jwt.verify(refreshTokenValue, getRefreshSecret()) as TokenPayload;
         const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
 
         if (!user || !user.refreshTokenHash || user.status !== "ACTIVE") {
-            throw new Error("Invalid refresh token");
+            throw new AppError(401, "Invalid refresh token");
         }
 
         const isTokenValid = await bcrypt.compare(refreshTokenValue, user.refreshTokenHash);
         if (!isTokenValid) {
-            throw new Error("Invalid refresh token");
+            throw new AppError(401, "Invalid refresh token");
         }
 
         return buildAuthResponse(mapUser(user));
